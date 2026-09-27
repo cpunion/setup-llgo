@@ -3,13 +3,19 @@ description: Install LLGo from a release, version range, branch or commit
 inputs:
   llgo-version:
     description: Version, prefix, SemVer range, tag/branch glob (* or ?), branch, or commit SHA
-    default: latest
+    default: ''
+  llgo-version-file:
+    description: Plain version/ref file, or go.mod/go.work containing a // llgo directive
+    default: ''
   install-method:
     description: auto prefers release archives and falls back to source; release or source forces that method
     default: auto
   go-version:
     description: Go version used to build LLGo and compile user programs
-    default: '1.27'
+    default: ''
+  go-version-file:
+    description: Go toolchain version file; defaults to Go 1.27 when neither Go input is supplied
+    default: ''
   llvm-version:
     description: LLVM major version (Windows supports 22)
     default: '22'
@@ -66,6 +72,7 @@ runs:
       env:
         SETUP_LLGO_PHASE: prepare
         INPUT_LLGO-VERSION: ${{ inputs.llgo-version }}
+        INPUT_LLGO-VERSION-FILE: ${{ inputs.llgo-version-file }}
         INPUT_INSTALL-METHOD: ${{ inputs.install-method }}
         INPUT_ARCHITECTURE: ${{ inputs.architecture }}
         INPUT_WINDOWS-ABI: ${{ inputs.windows-abi }}
@@ -101,7 +108,8 @@ runs:
       uses: actions/setup-go@v7
       env: ${{ fromJSON(steps.windows_archive_path.outputs.env || '{}') }}
       with:
-        go-version: ${{ inputs.go-version }}
+        go-version: ${{ inputs.go-version || (inputs.go-version-file == '' && '1.27' || '') }}
+        go-version-file: ${{ inputs.go-version-file }}
         architecture: ${{ steps.prepare.outputs.architecture == 'amd64' && 'x64' || 'arm64' }}
         check-latest: ${{ inputs.check-latest }}
         token: ${{ inputs.token }}
@@ -864,6 +872,7 @@ runs:
         SETUP_LLGO_PHASE: install
         SETUP_LLGO_SOURCE: ${{ steps.prepare.outputs.install-dir }}
         SETUP_LLGO_METHOD: ${{ steps.prepare.outputs.install-method }}
+        SETUP_LLGO_REF: ${{ steps.prepare.outputs.llgo-ref }}
     - name: Activate Windows MSVC target
       if: runner.os == 'Windows' && inputs.install-dependencies == 'true' && inputs.windows-abi == 'msvc'
       shell: pwsh

@@ -1,4 +1,13 @@
-import { parseRemoteRefs, resolveVersion, RemoteRef } from '../src/resolve'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import {
+  parseRemoteRefs,
+  resolveVersion,
+  RemoteRef,
+  versionInput,
+  verifyInstalledVersion
+} from '../src/resolve'
 
 const refs: RemoteRef[] = [
   ...['v0.9.8', 'v1.0.3', 'v1.0.4', 'v1.1.0', 'v2.0.0-rc.1'].map((name, i) => ({
@@ -65,4 +74,32 @@ describe('LLGo ref resolution', () => {
       kind: 'tag'
     })
   })
+})
+
+it('reads version files and honors explicit version precedence', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llgo-version-file-'))
+  try {
+    const plain = path.join(dir, '.llgo-version')
+    fs.writeFileSync(plain, 'release/1.0\n')
+    expect(versionInput('', plain)).toBe('release/1.0')
+    const mod = path.join(dir, 'go.mod')
+    fs.writeFileSync(mod, 'module example\n// llgo v1.0.*\n')
+    expect(versionInput('', mod)).toBe('v1.0.*')
+    expect(versionInput('main', 'missing')).toBe('main')
+    expect(versionInput('', '')).toBe('')
+    fs.writeFileSync(mod, 'module example\n')
+    expect(() => versionInput('', mod)).toThrow('No // llgo')
+    fs.writeFileSync(plain, '')
+    expect(() => versionInput('', plain)).toThrow('Empty')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+it('validates the installed release patch version', () => {
+  expect(() =>
+    verifyInstalledVersion('llgo v1.0.4 darwin/arm64', 'refs/tags/v1.0.4')
+  ).not.toThrow()
+  expect(() =>
+    verifyInstalledVersion('llgo v1.0.3 darwin/arm64', 'refs/tags/v1.0.4')
+  ).toThrow('does not match')
 })

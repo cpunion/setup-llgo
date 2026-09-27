@@ -1,4 +1,6 @@
 import * as semver from 'semver'
+import fs from 'fs'
+import path from 'path'
 
 export interface RemoteRef {
   name: string
@@ -80,4 +82,26 @@ export function resolveVersion(input: string, refs: RemoteRef[]): Selection {
   if (branchMatches.length > 1)
     throw new Error(`Ambiguous LLGo branch pattern: ${spec}`)
   throw new Error(`No LLGo version, tag, branch or commit matches: ${spec}`)
+}
+
+export function versionInput(explicit: string, file: string): string {
+  if (explicit.trim()) return explicit.trim()
+  if (!file) return ''
+  const contents = fs.readFileSync(file, 'utf8').trim()
+  if (['go.mod', 'go.work'].includes(path.basename(file))) {
+    const match = contents.match(/^\s*\/\/\s*llgo\s+(.+?)\s*$/m)
+    if (!match) throw new Error(`No // llgo version directive in ${file}`)
+    return match[1]
+  }
+  if (!contents) throw new Error(`Empty LLGo version file: ${file}`)
+  return contents
+}
+
+export function verifyInstalledVersion(actual: string, ref: string): void {
+  if (!ref.startsWith('refs/tags/')) return
+  const expected = semver.valid(ref.slice('refs/tags/'.length))
+  if (!expected) return
+  const reported = actual.match(/^llgo v?(\S+)\s/)
+  if (!reported || reported[1] !== expected)
+    throw new Error(`Installed LLGo version ${actual} does not match ${ref}`)
 }

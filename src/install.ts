@@ -3,11 +3,25 @@ import { execFileSync } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { parseRemoteRefs, resolveVersion, Selection } from './resolve'
+import {
+  parseRemoteRefs,
+  resolveVersion,
+  Selection,
+  versionInput,
+  verifyInstalledVersion
+} from './resolve'
 import { platformFor, Platform, releaseAsset } from './platform'
 import { download, verifyChecksum } from './download'
 
 const repository = 'https://github.com/xgo-dev/llgo.git'
+
+export function archiveTool(): string {
+  // Git for Windows also ships GNU tar, which treats C: as a remote host
+  // and cannot unpack ZIPs. Use the native bsdtar explicitly.
+  return process.platform === 'win32'
+    ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    : 'tar'
+}
 function git(args: string[], cwd?: string): string {
   return execFileSync('git', args, {
     cwd,
@@ -85,7 +99,9 @@ export async function installRelease(
   await download(checksumAsset.browser_download_url, checksums)
   await download(asset.browser_download_url, archive)
   await verifyChecksum(archive, filename, fs.readFileSync(checksums, 'utf8'))
-  execFileSync('tar', ['-xf', archive, '-C', destination], { stdio: 'inherit' })
+  execFileSync(archiveTool(), ['-xf', archive, '-C', destination], {
+    stdio: 'inherit'
+  })
   fs.unlinkSync(archive)
   fs.unlinkSync(checksums)
   core.info(`Installed release asset ${filename}`)
@@ -104,7 +120,13 @@ export async function prepareLLGo(): Promise<void> {
   const refs = parseRemoteRefs(
     git(['ls-remote', '--heads', '--tags', repository])
   )
-  const selected = resolveVersion(core.getInput('llgo-version'), refs)
+  const selected = resolveVersion(
+    versionInput(
+      core.getInput('llgo-version'),
+      core.getInput('llgo-version-file')
+    ),
+    refs
+  )
   // Own only a unique temporary directory; never touch the user's ~/workdir.
   const sourceDir = fs.mkdtempSync(
     path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'setup-llgo-')
@@ -154,6 +176,8 @@ export function installLLGo(sourceDir: string, method: string): void {
     env,
     encoding: 'utf8'
   }).trim()
+  if (method === 'release')
+    verifyInstalledVersion(version, process.env.SETUP_LLGO_REF || '')
   core.exportVariable('LLGO_ROOT', sourceDir)
   core.addPath(path.dirname(binary))
   core.info(version)

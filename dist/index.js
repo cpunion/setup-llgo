@@ -6123,7 +6123,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.installLLGo = exports.prepareLLGo = exports.installRelease = exports.checkoutLLGo = void 0;
+exports.installLLGo = exports.prepareLLGo = exports.installRelease = exports.checkoutLLGo = exports.archiveTool = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const child_process_1 = __nccwpck_require__(2081);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
@@ -6133,6 +6133,14 @@ const resolve_1 = __nccwpck_require__(1077);
 const platform_1 = __nccwpck_require__(2999);
 const download_1 = __nccwpck_require__(6232);
 const repository = 'https://github.com/xgo-dev/llgo.git';
+function archiveTool() {
+    // Git for Windows also ships GNU tar, which treats C: as a remote host
+    // and cannot unpack ZIPs. Use the native bsdtar explicitly.
+    return process.platform === 'win32'
+        ? path_1.default.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+        : 'tar';
+}
+exports.archiveTool = archiveTool;
 function git(args, cwd) {
     return (0, child_process_1.execFileSync)('git', args, {
         cwd,
@@ -6193,7 +6201,9 @@ async function installRelease(selected, platform, destination) {
     await (0, download_1.download)(checksumAsset.browser_download_url, checksums);
     await (0, download_1.download)(asset.browser_download_url, archive);
     await (0, download_1.verifyChecksum)(archive, filename, fs_1.default.readFileSync(checksums, 'utf8'));
-    (0, child_process_1.execFileSync)('tar', ['-xf', archive, '-C', destination], { stdio: 'inherit' });
+    (0, child_process_1.execFileSync)(archiveTool(), ['-xf', archive, '-C', destination], {
+        stdio: 'inherit'
+    });
     fs_1.default.unlinkSync(archive);
     fs_1.default.unlinkSync(checksums);
     core.info(`Installed release asset ${filename}`);
@@ -6206,7 +6216,7 @@ async function prepareLLGo() {
     if (!['auto', 'source', 'release'].includes(method))
         throw new Error(`Unknown install-method: ${method}`);
     const refs = (0, resolve_1.parseRemoteRefs)(git(['ls-remote', '--heads', '--tags', repository]));
-    const selected = (0, resolve_1.resolveVersion)(core.getInput('llgo-version'), refs);
+    const selected = (0, resolve_1.resolveVersion)((0, resolve_1.versionInput)(core.getInput('llgo-version'), core.getInput('llgo-version-file')), refs);
     // Own only a unique temporary directory; never touch the user's ~/workdir.
     const sourceDir = fs_1.default.mkdtempSync(path_1.default.join(process.env.RUNNER_TEMP || os_1.default.tmpdir(), 'setup-llgo-'));
     try {
@@ -6246,6 +6256,8 @@ function installLLGo(sourceDir, method) {
         env,
         encoding: 'utf8'
     }).trim();
+    if (method === 'release')
+        (0, resolve_1.verifyInstalledVersion)(version, process.env.SETUP_LLGO_REF || '');
     core.exportVariable('LLGO_ROOT', sourceDir);
     core.addPath(path_1.default.dirname(binary));
     core.info(version);
@@ -6315,9 +6327,14 @@ var __importStar = (this && this.__importStar) || function (mod) {
     __setModuleDefault(result, mod);
     return result;
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.resolveVersion = exports.parseRemoteRefs = void 0;
+exports.verifyInstalledVersion = exports.versionInput = exports.resolveVersion = exports.parseRemoteRefs = void 0;
 const semver = __importStar(__nccwpck_require__(1383));
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const path_1 = __importDefault(__nccwpck_require__(1017));
 function parseRemoteRefs(output) {
     const refs = new Map();
     const peeled = new Map();
@@ -6395,6 +6412,34 @@ function resolveVersion(input, refs) {
     throw new Error(`No LLGo version, tag, branch or commit matches: ${spec}`);
 }
 exports.resolveVersion = resolveVersion;
+function versionInput(explicit, file) {
+    if (explicit.trim())
+        return explicit.trim();
+    if (!file)
+        return '';
+    const contents = fs_1.default.readFileSync(file, 'utf8').trim();
+    if (['go.mod', 'go.work'].includes(path_1.default.basename(file))) {
+        const match = contents.match(/^\s*\/\/\s*llgo\s+(.+?)\s*$/m);
+        if (!match)
+            throw new Error(`No // llgo version directive in ${file}`);
+        return match[1];
+    }
+    if (!contents)
+        throw new Error(`Empty LLGo version file: ${file}`);
+    return contents;
+}
+exports.versionInput = versionInput;
+function verifyInstalledVersion(actual, ref) {
+    if (!ref.startsWith('refs/tags/'))
+        return;
+    const expected = semver.valid(ref.slice('refs/tags/'.length));
+    if (!expected)
+        return;
+    const reported = actual.match(/^llgo v?(\S+)\s/);
+    if (!reported || reported[1] !== expected)
+        throw new Error(`Installed LLGo version ${actual} does not match ${ref}`);
+}
+exports.verifyInstalledVersion = verifyInstalledVersion;
 
 
 /***/ }),

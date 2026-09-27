@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test-typescript:
     strategy:
@@ -55,12 +58,15 @@ jobs:
         working-directory: testdata/smoke
         env:
           ACTUAL_METHOD: ${{ steps.setup.outputs.install-method }}
+          ACTUAL_VERIFIED: ${{ steps.setup.outputs.llgo-version-verified }}
+          EXPECTED_VERIFIED: ${{ matrix.method == 'release' && 'true' || 'false' }}
           EXPECTED_METHOD: ${{ matrix.method }}
           LLGO_REVISION: ${{ steps.setup.outputs.llgo-revision }}
           LLGO_ARCH: ${{ matrix.platform.arch }}
           LLGO_ABI: ${{ matrix.platform.abi }}
         run: |
           test "$ACTUAL_METHOD" = "$EXPECTED_METHOD"
+          test "$ACTUAL_VERIFIED" = "$EXPECTED_VERIFIED"
           test "${#LLGO_REVISION}" = 40
           llgo version
           llgo test -v ./...

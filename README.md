@@ -39,9 +39,11 @@ remotely on every run; the resolved full SHA is logged and available as output.
 
 | Input | Default | Purpose |
 | --- | --- | --- |
-| `llgo-version` | `latest` | Selector described above |
+| `llgo-version` | Empty (latest stable tag) | Selector described above |
+| `llgo-version-file` | Empty | Plain selector file or `// llgo <selector>` in go.mod/go.work; explicit version takes precedence |
 | `install-method` | `auto` | `auto`, `release`, or `source` |
-| `go-version` | `1.27` | Go toolchain version |
+| `go-version` | `1.27` when neither Go input is supplied | Go toolchain version |
+| `go-version-file` | Empty | Version file passed to actions/setup-go |
 | `llvm-version` | `22` | LLVM major version; Windows currently uses 22 |
 | `architecture` | Runner architecture | Native `amd64`/`x64` or `arm64` |
 | `windows-abi` | `msvc` | `msvc` or `mingw` |

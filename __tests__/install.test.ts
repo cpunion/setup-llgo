@@ -5,7 +5,7 @@ import os from 'os'
 import path from 'path'
 import * as core from '@actions/core'
 import * as downloads from '../src/download'
-import { checkoutLLGo, installRelease } from '../src/install'
+import { checkoutLLGo, installRelease, archiveTool } from '../src/install'
 import { parseRemoteRefs, resolveVersion, Selection } from '../src/resolve'
 
 let root: string
@@ -92,7 +92,7 @@ it('verifies and extracts a matching precompiled release', async () => {
   fs.mkdirSync(path.join(payload, 'bin'))
   fs.writeFileSync(path.join(payload, 'bin/llgo'), 'compiler')
   const archive = path.join(root, 'fixture.tar.gz')
-  execFileSync('tar', ['-czf', archive, '-C', payload, '.'])
+  execFileSync(archiveTool(), ['-czf', archive, '-C', payload, '.'])
   const checksum = createHash('sha256')
     .update(fs.readFileSync(archive))
     .digest('hex')
