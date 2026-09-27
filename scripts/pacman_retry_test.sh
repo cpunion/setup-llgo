@@ -3,7 +3,7 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=.github/actions/setup-deps/pacman_retry.sh
+# shellcheck source=scripts/pacman_retry.sh
 source "${script_dir}/pacman_retry.sh"
 
 fail() {
@@ -17,7 +17,7 @@ last_sleep=""
 last_args=()
 
 # Called indirectly by pacman_with_retry.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 pacman_command() {
 	attempts=$((attempts + 1))
 	last_args=("$@")
@@ -25,7 +25,7 @@ pacman_command() {
 }
 
 # Called indirectly by pacman_with_retry.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 pacman_retry_sleep() {
 	sleeps=$((sleeps + 1))
 	last_sleep="$1"
@@ -42,7 +42,7 @@ LLGO_PACMAN_MAX_ATTEMPTS=3 LLGO_PACMAN_RETRY_DELAY_SECONDS=7 \
 attempts=0
 sleeps=0
 # Called indirectly by pacman_with_retry.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 pacman_command() {
 	attempts=$((attempts + 1))
 	return 1
