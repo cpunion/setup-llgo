@@ -29,7 +29,11 @@ export function platformFor(
   }
 }
 
+export function releaseVersion(tag: string): string {
+  return tag.replace(/^v/, '')
+}
+
 export function releaseAsset(tag: string, platform: Platform): string {
   const suffix = platform.os === 'windows' ? `-${platform.abi}.zip` : '.tar.gz'
-  return `llgo${tag.replace(/^v/, '')}.${platform.os}-${platform.arch}${suffix}`
+  return `llgo${releaseVersion(tag)}.${platform.os}-${platform.arch}${suffix}`
 }

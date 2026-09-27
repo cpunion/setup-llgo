@@ -43,6 +43,7 @@ it('checks out a tag, a branch, full SHA and an old abbreviated SHA in isolated 
   const sentinel = path.join(root, 'workdir')
   fs.mkdirSync(sentinel)
   fs.writeFileSync(path.join(sentinel, 'keep'), 'untouched')
+  const tagsBySpec = new Map<string, string>()
   for (const [spec, want] of [
     ['v1.0.4', first],
     ['main', head],
@@ -52,7 +53,9 @@ it('checks out a tag, a branch, full SHA and an old abbreviated SHA in isolated 
     const dest = fs.mkdtempSync(path.join(root, 'install 空格 '))
     expect(checkoutLLGo(resolveVersion(spec, refs), dest, repo)).toBe(want)
     expect(git(['rev-parse', 'HEAD'], dest)).toBe(want)
+    tagsBySpec.set(spec, git(['tag', '--points-at', 'HEAD'], dest))
   }
+  expect(tagsBySpec.get('v1.0.4')).toBe('v1.0.4')
   expect(fs.readFileSync(path.join(sentinel, 'keep'), 'utf8')).toBe('untouched')
 })
 
@@ -128,4 +131,16 @@ it('rejects corrupt or unlisted archives', async () => {
   await expect(
     downloads.verifyChecksum(archive, 'archive', '')
   ).rejects.toThrow('No SHA-256')
+})
+
+it('rejects redirects outside the release hosts before making a request', async () => {
+  await expect(
+    downloads.download(
+      'https://example.invalid/archive',
+      path.join(root, 'bad')
+    )
+  ).rejects.toThrow('Invalid download URL')
+  await expect(
+    downloads.download('http://github.com/archive', path.join(root, 'bad'))
+  ).rejects.toThrow('Invalid download URL')
 })

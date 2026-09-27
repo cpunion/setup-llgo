@@ -10,7 +10,7 @@ import {
   versionInput,
   verifyInstalledVersion
 } from './resolve'
-import { platformFor, Platform, releaseAsset } from './platform'
+import { platformFor, Platform, releaseAsset, releaseVersion } from './platform'
 import { download, verifyChecksum } from './download'
 
 const repository = 'https://github.com/xgo-dev/llgo.git'
@@ -56,6 +56,8 @@ export function checkoutLLGo(
   } else {
     git(['fetch', '--quiet', '--depth=1', 'origin', revision], sourceDir)
   }
+  if (selected.kind === 'tag')
+    git(['update-ref', selected.ref, revision], sourceDir)
   git(['checkout', '--quiet', '--detach', revision], sourceDir)
   return git(['rev-parse', 'HEAD'], sourceDir)
 }
@@ -90,7 +92,7 @@ export async function installRelease(
   const asset = release.assets.find(item => item.name === filename)
   if (!asset) return false
   const checksumAsset = release.assets.find(
-    item => item.name === `llgo${tag.replace(/^v/, '')}.checksums.txt`
+    item => item.name === `llgo${releaseVersion(tag)}.checksums.txt`
   )
   if (!checksumAsset)
     throw new Error(`Release ${tag} is missing its checksum manifest`)

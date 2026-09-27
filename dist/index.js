@@ -6003,7 +6003,17 @@ const fs_1 = __importDefault(__nccwpck_require__(7147));
 const https_1 = __importDefault(__nccwpck_require__(5687));
 const promises_1 = __nccwpck_require__(4845);
 async function download(url, destination, redirects = 0) {
-    if (!url.startsWith('https:') || redirects > 5)
+    const parsed = new URL(url);
+    const trustedHosts = [
+        'github.com',
+        'objects.githubusercontent.com',
+        'release-assets.githubusercontent.com'
+    ];
+    if (parsed.protocol !== 'https:' ||
+        !trustedHosts.includes(parsed.hostname) ||
+        parsed.username ||
+        parsed.password ||
+        redirects > 5)
         throw new Error(`Invalid download URL or too many redirects: ${url}`);
     const response = await new Promise((resolve, reject) => {
         const request = https_1.default.get(url, { headers: { 'User-Agent': 'setup-llgo' } }, resolve);
@@ -6021,6 +6031,8 @@ async function download(url, destination, redirects = 0) {
         response.resume();
         throw new Error(`Download failed (${response.statusCode}): ${url}`);
     }
+    // Keep the inactivity timeout active while the body is streamed as well.
+    response.setTimeout(120000, () => response.destroy(new Error('Download timed out')));
     await (0, promises_1.pipeline)(response, fs_1.default.createWriteStream(destination));
 }
 exports.download = download;
@@ -6168,6 +6180,8 @@ function checkoutLLGo(selected, sourceDir, repo = repository) {
     else {
         git(['fetch', '--quiet', '--depth=1', 'origin', revision], sourceDir);
     }
+    if (selected.kind === 'tag')
+        git(['update-ref', selected.ref, revision], sourceDir);
     git(['checkout', '--quiet', '--detach', revision], sourceDir);
     return git(['rev-parse', 'HEAD'], sourceDir);
 }
@@ -6193,7 +6207,7 @@ async function installRelease(selected, platform, destination) {
     const asset = release.assets.find(item => item.name === filename);
     if (!asset)
         return false;
-    const checksumAsset = release.assets.find(item => item.name === `llgo${tag.replace(/^v/, '')}.checksums.txt`);
+    const checksumAsset = release.assets.find(item => item.name === `llgo${(0, platform_1.releaseVersion)(tag)}.checksums.txt`);
     if (!checksumAsset)
         throw new Error(`Release ${tag} is missing its checksum manifest`);
     const archive = path_1.default.join(destination, filename);
@@ -6274,7 +6288,7 @@ exports.installLLGo = installLLGo;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.releaseAsset = exports.platformFor = void 0;
+exports.releaseAsset = exports.releaseVersion = exports.platformFor = void 0;
 function platformFor(os, architecture, abi) {
     const arch = { x64: 'amd64', x86_64: 'amd64', aarch64: 'arm64' }[architecture.toLowerCase()] || architecture.toLowerCase();
     if (!['linux', 'darwin', 'win32'].includes(os))
@@ -6290,9 +6304,13 @@ function platformFor(os, architecture, abi) {
     };
 }
 exports.platformFor = platformFor;
+function releaseVersion(tag) {
+    return tag.replace(/^v/, '');
+}
+exports.releaseVersion = releaseVersion;
 function releaseAsset(tag, platform) {
     const suffix = platform.os === 'windows' ? `-${platform.abi}.zip` : '.tar.gz';
-    return `llgo${tag.replace(/^v/, '')}.${platform.os}-${platform.arch}${suffix}`;
+    return `llgo${releaseVersion(tag)}.${platform.os}-${platform.arch}${suffix}`;
 }
 exports.releaseAsset = releaseAsset;
 

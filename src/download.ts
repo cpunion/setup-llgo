@@ -8,7 +8,19 @@ export async function download(
   destination: string,
   redirects = 0
 ): Promise<void> {
-  if (!url.startsWith('https:') || redirects > 5)
+  const parsed = new URL(url)
+  const trustedHosts = [
+    'github.com',
+    'objects.githubusercontent.com',
+    'release-assets.githubusercontent.com'
+  ]
+  if (
+    parsed.protocol !== 'https:' ||
+    !trustedHosts.includes(parsed.hostname) ||
+    parsed.username ||
+    parsed.password ||
+    redirects > 5
+  )
     throw new Error(`Invalid download URL or too many redirects: ${url}`)
   const response = await new Promise<import('http').IncomingMessage>(
     (resolve, reject) => {
@@ -40,6 +52,10 @@ export async function download(
     response.resume()
     throw new Error(`Download failed (${response.statusCode}): ${url}`)
   }
+  // Keep the inactivity timeout active while the body is streamed as well.
+  response.setTimeout(120000, () =>
+    response.destroy(new Error('Download timed out'))
+  )
   await pipeline(response, fs.createWriteStream(destination))
 }
 
