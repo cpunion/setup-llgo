@@ -5988,6 +5988,109 @@ exports["default"] = _default;
 
 /***/ }),
 
+/***/ 6232:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.verifyChecksum = exports.download = void 0;
+const crypto_1 = __nccwpck_require__(6113);
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const https_1 = __importDefault(__nccwpck_require__(5687));
+const promises_1 = __nccwpck_require__(4845);
+async function download(url, destination, redirects = 0) {
+    if (!url.startsWith('https:') || redirects > 5)
+        throw new Error(`Invalid download URL or too many redirects: ${url}`);
+    const response = await new Promise((resolve, reject) => {
+        const request = https_1.default.get(url, { headers: { 'User-Agent': 'setup-llgo' } }, resolve);
+        request.setTimeout(120000, () => request.destroy(new Error('Download timed out')));
+        request.on('error', reject);
+    });
+    if (response.statusCode &&
+        [301, 302, 303, 307, 308].includes(response.statusCode) &&
+        response.headers.location) {
+        response.resume();
+        await download(new URL(response.headers.location, url).href, destination, redirects + 1);
+        return;
+    }
+    if (response.statusCode !== 200) {
+        response.resume();
+        throw new Error(`Download failed (${response.statusCode}): ${url}`);
+    }
+    await (0, promises_1.pipeline)(response, fs_1.default.createWriteStream(destination));
+}
+exports.download = download;
+async function verifyChecksum(archive, filename, checksums) {
+    const entry = checksums
+        .split(/\r?\n/)
+        .find(line => line.trim().split(/\s+/)[1]?.replace(/^\*/, '') === filename);
+    const expected = entry?.trim().split(/\s+/)[0];
+    if (!expected || !/^[a-f\d]{64}$/i.test(expected))
+        throw new Error(`No SHA-256 checksum for ${filename}`);
+    const hash = (0, crypto_1.createHash)('sha256');
+    for await (const chunk of fs_1.default.createReadStream(archive))
+        hash.update(chunk);
+    if (hash.digest('hex') !== expected.toLowerCase())
+        throw new Error(`SHA-256 mismatch for ${filename}`);
+}
+exports.verifyChecksum = verifyChecksum;
+
+
+/***/ }),
+
+/***/ 6144:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const core = __importStar(__nccwpck_require__(2186));
+const install_1 = __nccwpck_require__(1649);
+async function run() {
+    try {
+        if (process.env.SETUP_LLGO_PHASE === 'prepare')
+            await (0, install_1.prepareLLGo)();
+        else if (process.env.SETUP_LLGO_PHASE === 'install')
+            (0, install_1.installLLGo)(process.env.SETUP_LLGO_SOURCE || '', process.env.SETUP_LLGO_METHOD || '');
+        else
+            throw new Error('Unknown setup-llgo phase');
+    }
+    catch (error) {
+        core.setFailed(error instanceof Error ? error.message : String(error));
+    }
+}
+void run();
+
+
+/***/ }),
+
 /***/ 1649:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -6020,159 +6123,278 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.parseGopVersionFile = exports.selectVersion = exports.installLLGo = void 0;
+exports.installLLGo = exports.prepareLLGo = exports.installRelease = exports.checkoutLLGo = void 0;
 const core = __importStar(__nccwpck_require__(2186));
-const semver = __importStar(__nccwpck_require__(1383));
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-const path_1 = __importDefault(__nccwpck_require__(1017));
-const os_1 = __importDefault(__nccwpck_require__(2037));
 const child_process_1 = __nccwpck_require__(2081);
-const REPO = 'https://github.com/goplus/llgo.git';
-/**
- * The main function for the action.
- * @returns {Promise<void>} Resolves when the action is complete.
- */
-async function installLLGo() {
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+const os_1 = __importDefault(__nccwpck_require__(2037));
+const path_1 = __importDefault(__nccwpck_require__(1017));
+const resolve_1 = __nccwpck_require__(1077);
+const platform_1 = __nccwpck_require__(2999);
+const download_1 = __nccwpck_require__(6232);
+const repository = 'https://github.com/xgo-dev/llgo.git';
+function git(args, cwd) {
+    return (0, child_process_1.execFileSync)('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+    }).trim();
+}
+function checkoutLLGo(selected, sourceDir, repo = repository) {
+    git(['init', '--quiet'], sourceDir);
+    git(['remote', 'add', 'origin', repo], sourceDir);
+    let revision = selected.sha;
+    if (selected.kind === 'commit' && revision.length < 40) {
+        // A server cannot fetch arbitrary abbreviated object IDs. Resolve against
+        // fetched history, letting Git reject unknown or ambiguous abbreviations.
+        git([
+            'fetch',
+            '--quiet',
+            '--filter=blob:none',
+            'origin',
+            '+refs/heads/*:refs/remotes/origin/*',
+            '+refs/tags/*:refs/tags/*'
+        ], sourceDir);
+        revision = git(['rev-parse', '--verify', `${revision}^{commit}`], sourceDir);
+    }
+    else {
+        git(['fetch', '--quiet', '--depth=1', 'origin', revision], sourceDir);
+    }
+    git(['checkout', '--quiet', '--detach', revision], sourceDir);
+    return git(['rev-parse', 'HEAD'], sourceDir);
+}
+exports.checkoutLLGo = checkoutLLGo;
+async function installRelease(selected, platform, destination) {
+    if (selected.kind !== 'tag')
+        return false;
+    const tag = selected.ref.slice('refs/tags/'.length);
+    const headers = {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'setup-llgo'
+    };
+    const token = core.getInput('token');
+    if (token)
+        headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(`https://api.github.com/repos/xgo-dev/llgo/releases/tags/${encodeURIComponent(tag)}`, { headers });
+    if (response.status === 404)
+        return false;
+    if (!response.ok)
+        throw new Error(`Release lookup failed: HTTP ${response.status}`);
+    const release = (await response.json());
+    const filename = (0, platform_1.releaseAsset)(tag, platform);
+    const asset = release.assets.find(item => item.name === filename);
+    if (!asset)
+        return false;
+    const checksumAsset = release.assets.find(item => item.name === `llgo${tag.replace(/^v/, '')}.checksums.txt`);
+    if (!checksumAsset)
+        throw new Error(`Release ${tag} is missing its checksum manifest`);
+    const archive = path_1.default.join(destination, filename);
+    const checksums = path_1.default.join(destination, 'checksums.txt');
+    await (0, download_1.download)(checksumAsset.browser_download_url, checksums);
+    await (0, download_1.download)(asset.browser_download_url, archive);
+    await (0, download_1.verifyChecksum)(archive, filename, fs_1.default.readFileSync(checksums, 'utf8'));
+    (0, child_process_1.execFileSync)('tar', ['-xf', archive, '-C', destination], { stdio: 'inherit' });
+    fs_1.default.unlinkSync(archive);
+    fs_1.default.unlinkSync(checksums);
+    core.info(`Installed release asset ${filename}`);
+    return true;
+}
+exports.installRelease = installRelease;
+async function prepareLLGo() {
+    const platform = (0, platform_1.platformFor)(process.platform, core.getInput('architecture') || process.env.RUNNER_ARCH || process.arch, core.getInput('windows-abi') || 'msvc');
+    const method = core.getInput('install-method') || 'auto';
+    if (!['auto', 'source', 'release'].includes(method))
+        throw new Error(`Unknown install-method: ${method}`);
+    const refs = (0, resolve_1.parseRemoteRefs)(git(['ls-remote', '--heads', '--tags', repository]));
+    const selected = (0, resolve_1.resolveVersion)(core.getInput('llgo-version'), refs);
+    // Own only a unique temporary directory; never touch the user's ~/workdir.
+    const sourceDir = fs_1.default.mkdtempSync(path_1.default.join(process.env.RUNNER_TEMP || os_1.default.tmpdir(), 'setup-llgo-'));
     try {
-        const versionSpec = resolveVersionInput() || '';
-        const tagVersions = semver.rsort(fetchTags().filter(v => semver.valid(v)));
-        let version = null;
-        if (!versionSpec || versionSpec === 'latest') {
-            version = tagVersions[0];
-            core.warning(`No llgo-version specified, using latest version: ${version}`);
-        }
-        else {
-            version = semver.maxSatisfying(tagVersions, versionSpec);
-            if (!version) {
-                core.warning(`No llgo-version found that satisfies '${versionSpec}', trying branches...`);
-                const branchVersions = fetchBranches();
-                if (!branchVersions.includes(versionSpec)) {
-                    throw new Error(`No llgo-version found that satisfies '${versionSpec}' in branches or tags`);
-                }
-                version = '';
-            }
-        }
-        let checkoutVersion = '';
-        if (version) {
-            core.info(`Selected version ${version} by spec ${versionSpec}`);
-            checkoutVersion = `v${version}`;
-            core.setOutput('llgo-version-verified', true);
-        }
-        else {
-            core.warning(`Unable to find a version that satisfies the version spec '${versionSpec}', trying branches...`);
-            checkoutVersion = versionSpec;
-            core.setOutput('llgo-version-verified', false);
-        }
-        const llgoDir = cloneBranchOrTag(checkoutVersion);
-        install(llgoDir);
-        // if (version) {
-        //   checkVersion(version)
-        // }
-        core.setOutput('llgo-version', llgoVersion());
+        const prebuilt = method !== 'source' &&
+            (await installRelease(selected, platform, sourceDir));
+        if (!prebuilt && method === 'release')
+            throw new Error(`No release asset for ${selected.ref} on ${platform.os}/${platform.arch}/${platform.abi}`);
+        const revision = prebuilt ? selected.sha : checkoutLLGo(selected, sourceDir);
+        core.info(`Selected ${selected.ref} at ${revision} (${prebuilt ? 'release' : 'source'})`);
+        core.setOutput('install-dir', sourceDir);
+        core.setOutput('install-method', prebuilt ? 'release' : 'source');
+        core.setOutput('llgo-revision', revision);
+        core.setOutput('llgo-ref', selected.ref);
+        core.setOutput('llgo-version-verified', selected.kind === 'tag');
+        core.setOutput('architecture', platform.arch);
+        core.exportVariable('SETUP_LLGO_ACTION_PATH', process.env.GITHUB_ACTION_PATH || '');
     }
     catch (error) {
-        // Fail the workflow run if an error occurs
-        if (error instanceof Error)
-            core.setFailed(error.message);
+        fs_1.default.rmSync(sourceDir, { recursive: true, force: true });
+        throw error;
     }
+}
+exports.prepareLLGo = prepareLLGo;
+function installLLGo(sourceDir, method) {
+    if (!sourceDir)
+        throw new Error('The LLGo installation directory is required');
+    const env = { ...process.env, LLGO_ROOT: sourceDir };
+    const executable = process.platform === 'win32' ? 'llgo.exe' : 'llgo';
+    if (method === 'source')
+        (0, child_process_1.execFileSync)('go', ['build', '-o', `bin/${executable}`, './cmd/llgo'], {
+            cwd: sourceDir,
+            env,
+            stdio: 'inherit'
+        });
+    const binary = path_1.default.join(sourceDir, 'bin', executable);
+    const version = (0, child_process_1.execFileSync)(binary, ['version'], {
+        env,
+        encoding: 'utf8'
+    }).trim();
+    core.exportVariable('LLGO_ROOT', sourceDir);
+    core.addPath(path_1.default.dirname(binary));
+    core.info(version);
+    core.setOutput('llgo-version', version);
 }
 exports.installLLGo = installLLGo;
-function selectVersion(versions, versionSpec) {
-    const sortedVersions = semver.rsort(versions.filter(v => semver.valid(v)));
-    if (!versionSpec || versionSpec === 'latest') {
-        return sortedVersions[0];
-    }
-    return semver.maxSatisfying(sortedVersions, versionSpec);
+
+
+/***/ }),
+
+/***/ 2999:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.releaseAsset = exports.platformFor = void 0;
+function platformFor(os, architecture, abi) {
+    const arch = { x64: 'amd64', x86_64: 'amd64', aarch64: 'arm64' }[architecture.toLowerCase()] || architecture.toLowerCase();
+    if (!['linux', 'darwin', 'win32'].includes(os))
+        throw new Error(`Unsupported OS: ${os}`);
+    if (!['amd64', 'arm64'].includes(arch))
+        throw new Error(`Unsupported architecture: ${architecture}`);
+    if (os === 'win32' && !['msvc', 'mingw'].includes(abi))
+        throw new Error(`Unsupported Windows ABI: ${abi}`);
+    return {
+        os: os === 'win32' ? 'windows' : os,
+        arch,
+        abi: os === 'win32' ? abi : ''
+    };
 }
-exports.selectVersion = selectVersion;
-function cloneBranchOrTag(versionSpec) {
-    // git clone https://github.com/llgo/llgo.git with tag $versionSpec to $HOME/workdir/llgo
-    const workDir = path_1.default.join(os_1.default.homedir(), 'workdir');
-    if (fs_1.default.existsSync(workDir)) {
-        fs_1.default.rmSync(workDir, { recursive: true });
-    }
-    fs_1.default.mkdirSync(workDir);
-    core.info(`Cloning llgo ${versionSpec} to ${workDir} ...`);
-    const cmd = `git clone --depth 1 --branch ${versionSpec} ${REPO}`;
-    (0, child_process_1.execSync)(cmd, { cwd: workDir, stdio: 'inherit' });
-    core.info('llgo cloned');
-    return path_1.default.join(workDir, 'llgo');
+exports.platformFor = platformFor;
+function releaseAsset(tag, platform) {
+    const suffix = platform.os === 'windows' ? `-${platform.abi}.zip` : '.tar.gz';
+    return `llgo${tag.replace(/^v/, '')}.${platform.os}-${platform.arch}${suffix}`;
 }
-function install(llgoDir) {
-    core.info(`Installing llgo ${llgoDir} ...`);
-    const bin = path_1.default.join(os_1.default.homedir(), 'bin');
-    (0, child_process_1.execSync)('go install ./cmd/llgo', {
-        cwd: llgoDir,
-        stdio: 'inherit',
-        env: {
-            ...process.env,
-            GOBIN: bin
-        }
+exports.releaseAsset = releaseAsset;
+
+
+/***/ }),
+
+/***/ 1077:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveVersion = exports.parseRemoteRefs = void 0;
+const semver = __importStar(__nccwpck_require__(1383));
+function parseRemoteRefs(output) {
+    const refs = new Map();
+    const peeled = new Map();
+    for (const line of output.split('\n')) {
+        const [sha, ref] = line.trim().split(/\s+/);
+        if (!sha || !ref)
+            continue;
+        if (ref.endsWith('^{}'))
+            peeled.set(ref.slice(0, -3), sha);
+        else if (ref.startsWith('refs/tags/'))
+            refs.set(ref, { name: ref.slice(10), sha, kind: 'tag' });
+        else if (ref.startsWith('refs/heads/'))
+            refs.set(ref, { name: ref.slice(11), sha, kind: 'branch' });
+    }
+    for (const [ref, sha] of peeled) {
+        const tag = refs.get(ref);
+        if (tag)
+            tag.sha = sha;
+    }
+    return [...refs.values()];
+}
+exports.parseRemoteRefs = parseRemoteRefs;
+function selected(ref) {
+    return {
+        ref: `refs/${ref.kind === 'tag' ? 'tags' : 'heads'}/${ref.name}`,
+        sha: ref.sha,
+        kind: ref.kind
+    };
+}
+function glob(pattern, name) {
+    const escaped = pattern.replace(/[|\\{}()[\]^$+?.*]/g, char => {
+        if (char === '*')
+            return '.*';
+        if (char === '?')
+            return '.';
+        return `\\${char}`;
     });
-    core.addPath(bin);
-    core.info('llgo installed');
+    return new RegExp(`^${escaped}$`).test(name);
 }
-// function checkVersion(versionSpec: string): string {
-//   core.info(`Testing llgo ${versionSpec} ...`)
-//   const actualVersion = llgoVersion()
-//   if (actualVersion !== versionSpec) {
-//     throw new Error(
-//       `Installed llgo version ${actualVersion} does not match expected version ${versionSpec}`
-//     )
-//   }
-//   core.info(`Installed llgo version ${actualVersion}`)
-//   return actualVersion
-// }
-function llgoVersion() {
-    const out = (0, child_process_1.execSync)('llgo version', { env: process.env });
-    return out.toString().trim().replace(/^v/, '');
-}
-function fetchTags() {
-    const cmd = `git -c versionsort.suffix=- ls-remote --tags --sort=v:refname ${REPO}`;
-    const out = (0, child_process_1.execSync)(cmd).toString();
-    const versions = out
-        .split('\n')
-        .filter(s => s)
-        .map(s => s.split('\t')[1].replace('refs/tags/', ''))
-        .map(s => s.replace(/^v/, ''));
-    return versions;
-}
-function fetchBranches() {
-    const cmd = `git -c versionsort.suffix=- ls-remote --heads --sort=v:refname ${REPO}`;
-    const out = (0, child_process_1.execSync)(cmd).toString();
-    const versions = out
-        .split('\n')
-        .filter(s => s)
-        .map(s => s.split('\t')[1].replace('refs/heads/', ''));
-    return versions;
-}
-function resolveVersionInput() {
-    let version = process.env['INPUT_LLGO_VERSION'];
-    const versionFilePath = process.env['INPUT_LLGO_VERSION_FILE'];
-    if (version && versionFilePath) {
-        core.warning('Both llgo-version and llgo-version-file inputs are specified, only llgo-version will be used');
+function resolveVersion(input, refs) {
+    const spec = input.trim() || 'latest';
+    const tags = refs.filter(ref => ref.kind === 'tag');
+    const branches = refs.filter(ref => ref.kind === 'branch');
+    if (spec.startsWith('refs/')) {
+        const exact = refs.find(ref => selected(ref).ref === spec);
+        if (!exact)
+            throw new Error(`Unknown LLGo ref: ${spec}`);
+        return selected(exact);
     }
-    if (version) {
-        return version;
-    }
-    if (versionFilePath) {
-        if (!fs_1.default.existsSync(versionFilePath)) {
-            throw new Error(`The specified llgo version file at: ${versionFilePath} does not exist`);
-        }
-        version = parseGopVersionFile(versionFilePath);
-    }
-    return version;
+    const exactTag = tags.find(ref => ref.name === spec || ref.name === `v${spec}`);
+    if (exactTag)
+        return selected(exactTag);
+    const exactBranch = branches.find(ref => ref.name === spec);
+    if (exactBranch)
+        return selected(exactBranch);
+    if (/^[a-f\d]{7,40}$/i.test(spec))
+        return { kind: 'commit', ref: spec, sha: spec.toLowerCase() };
+    const range = semver.validRange(spec === 'latest' ? '*' : spec);
+    const matches = range !== null
+        ? tags.filter(ref => semver.valid(ref.name) && semver.satisfies(ref.name, range))
+        : tags.filter(ref => glob(spec, ref.name));
+    const versions = matches.filter(ref => semver.valid(ref.name));
+    versions.sort((a, b) => semver.rcompare(a.name, b.name));
+    if (versions.length)
+        return selected(versions[0]);
+    if (matches.length === 1)
+        return selected(matches[0]);
+    if (matches.length > 1)
+        throw new Error(`Ambiguous LLGo tag pattern: ${spec}`);
+    const branchMatches = branches.filter(ref => glob(spec, ref.name));
+    if (branchMatches.length === 1)
+        return selected(branchMatches[0]);
+    if (branchMatches.length > 1)
+        throw new Error(`Ambiguous LLGo branch pattern: ${spec}`);
+    throw new Error(`No LLGo version, tag, branch or commit matches: ${spec}`);
 }
-function parseGopVersionFile(versionFilePath) {
-    const contents = fs_1.default.readFileSync(versionFilePath).toString();
-    if (path_1.default.basename(versionFilePath) === 'go.mod' ||
-        path_1.default.basename(versionFilePath) === 'go.work') {
-        const match = contents.match(/\/\/ llgo (\d+(\.\d+)*)/m);
-        return match ? match[1] : '';
-    }
-    return contents.trim();
-}
-exports.parseGopVersionFile = parseGopVersionFile;
+exports.resolveVersion = resolveVersion;
 
 
 /***/ }),
@@ -6257,6 +6479,14 @@ module.exports = require("path");
 
 /***/ }),
 
+/***/ 4845:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("stream/promises");
+
+/***/ }),
+
 /***/ 4404:
 /***/ ((module) => {
 
@@ -6311,25 +6541,12 @@ module.exports = require("util");
 /******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
 /******/ 	
 /************************************************************************/
-var __webpack_exports__ = {};
-// This entry need to be wrapped in an IIFE because it need to be in strict mode.
-(() => {
-"use strict";
-var exports = __webpack_exports__;
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-/**
- * The entrypoint for the action.
- */
-const install_1 = __nccwpck_require__(1649);
-async function run() {
-    await (0, install_1.installLLGo)();
-}
-// eslint-disable-next-line @typescript-eslint/no-floating-promises
-run();
-
-})();
-
-module.exports = __webpack_exports__;
+/******/ 	
+/******/ 	// startup
+/******/ 	// Load entry module and return exports
+/******/ 	// This entry module is referenced by other modules so it can't be inlined
+/******/ 	var __webpack_exports__ = __nccwpck_require__(6144);
+/******/ 	module.exports = __webpack_exports__;
+/******/ 	
 /******/ })()
 ;
