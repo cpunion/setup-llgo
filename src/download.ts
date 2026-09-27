@@ -2,8 +2,16 @@ import { createHash } from 'crypto'
 import fs from 'fs'
 import https from 'https'
 import { pipeline } from 'stream/promises'
+import { downloadTimeout, retryNetwork } from './network'
 
 export async function download(
+  url: string,
+  destination: string
+): Promise<void> {
+  await retryNetwork(async () => downloadOnce(url, destination))
+}
+
+async function downloadOnce(
   url: string,
   destination: string,
   redirects = 0
@@ -29,9 +37,7 @@ export async function download(
         { headers: { 'User-Agent': 'setup-llgo' } },
         resolve
       )
-      request.setTimeout(120000, () =>
-        request.destroy(new Error('Download timed out'))
-      )
+      request.setTimeout(120000, () => request.destroy(downloadTimeout()))
       request.on('error', reject)
     }
   )
@@ -41,7 +47,7 @@ export async function download(
     response.headers.location
   ) {
     response.resume()
-    await download(
+    await downloadOnce(
       new URL(response.headers.location, url).href,
       destination,
       redirects + 1
@@ -53,9 +59,7 @@ export async function download(
     throw new Error(`Download failed (${response.statusCode}): ${url}`)
   }
   // Keep the inactivity timeout active while the body is streamed as well.
-  response.setTimeout(120000, () =>
-    response.destroy(new Error('Download timed out'))
-  )
+  response.setTimeout(120000, () => response.destroy(downloadTimeout()))
   await pipeline(response, fs.createWriteStream(destination))
 }
 
