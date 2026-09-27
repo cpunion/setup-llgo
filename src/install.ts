@@ -1,180 +1,191 @@
 import * as core from '@actions/core'
-import * as semver from 'semver'
+import { execFileSync } from 'child_process'
 import fs from 'fs'
-import path from 'path'
 import os from 'os'
-import { execSync } from 'child_process'
+import path from 'path'
+import {
+  parseRemoteRefs,
+  resolveVersion,
+  Selection,
+  versionInput,
+  verifyInstalledVersion
+} from './resolve'
+import { platformFor, Platform, releaseAsset, releaseVersion } from './platform'
+import { download, verifyChecksum } from './download'
+import { retryNetwork } from './network'
 
-const REPO = 'https://github.com/goplus/llgo.git'
+const repository = 'https://github.com/xgo-dev/llgo.git'
 
-/**
- * The main function for the action.
- * @returns {Promise<void>} Resolves when the action is complete.
- */
-export async function installLLGo(): Promise<void> {
-  try {
-    const versionSpec = resolveVersionInput() || ''
-    const tagVersions = semver.rsort(fetchTags().filter(v => semver.valid(v)))
-    let version: string | null = null
-    if (!versionSpec || versionSpec === 'latest') {
-      version = tagVersions[0]
-      core.warning(
-        `No llgo-version specified, using latest version: ${version}`
-      )
-    } else {
-      version = semver.maxSatisfying(tagVersions, versionSpec)
-      if (!version) {
-        core.warning(
-          `No llgo-version found that satisfies '${versionSpec}', trying branches...`
-        )
-        const branchVersions = fetchBranches()
-        if (!branchVersions.includes(versionSpec)) {
-          throw new Error(
-            `No llgo-version found that satisfies '${versionSpec}' in branches or tags`
-          )
-        }
-        version = ''
-      }
-    }
-
-    let checkoutVersion = ''
-    if (version) {
-      core.info(`Selected version ${version} by spec ${versionSpec}`)
-      checkoutVersion = `v${version}`
-      core.setOutput('llgo-version-verified', true)
-    } else {
-      core.warning(
-        `Unable to find a version that satisfies the version spec '${versionSpec}', trying branches...`
-      )
-      checkoutVersion = versionSpec
-      core.setOutput('llgo-version-verified', false)
-    }
-    const llgoDir = cloneBranchOrTag(checkoutVersion)
-    install(llgoDir)
-    // if (version) {
-    //   checkVersion(version)
-    // }
-    core.setOutput('llgo-version', llgoVersion())
-  } catch (error) {
-    // Fail the workflow run if an error occurs
-    if (error instanceof Error) core.setFailed(error.message)
-  }
+export function archiveTool(): string {
+  // Git for Windows also ships GNU tar, which treats C: as a remote host
+  // and cannot unpack ZIPs. Use the native bsdtar explicitly.
+  return process.platform === 'win32'
+    ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    : 'tar'
+}
+function git(args: string[], cwd?: string): string {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  }).trim()
 }
 
-export function selectVersion(
-  versions: string[],
-  versionSpec?: string
-): string | null {
-  const sortedVersions = semver.rsort(versions.filter(v => semver.valid(v)))
-  if (!versionSpec || versionSpec === 'latest') {
-    return sortedVersions[0]
-  }
-  return semver.maxSatisfying(sortedVersions, versionSpec)
-}
-
-function cloneBranchOrTag(versionSpec: string): string {
-  // git clone https://github.com/llgo/llgo.git with tag $versionSpec to $HOME/workdir/llgo
-  const workDir = path.join(os.homedir(), 'workdir')
-  if (fs.existsSync(workDir)) {
-    fs.rmSync(workDir, { recursive: true })
-  }
-  fs.mkdirSync(workDir)
-  core.info(`Cloning llgo ${versionSpec} to ${workDir} ...`)
-  const cmd = `git clone --depth 1 --branch ${versionSpec} ${REPO}`
-  execSync(cmd, { cwd: workDir, stdio: 'inherit' })
-  core.info('llgo cloned')
-  return path.join(workDir, 'llgo')
-}
-
-function install(llgoDir: string): void {
-  core.info(`Installing llgo ${llgoDir} ...`)
-  const bin = path.join(os.homedir(), 'bin')
-  execSync('go install ./cmd/llgo', {
-    cwd: llgoDir,
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      GOBIN: bin
-    }
-  })
-  core.addPath(bin)
-  core.info('llgo installed')
-}
-
-// function checkVersion(versionSpec: string): string {
-//   core.info(`Testing llgo ${versionSpec} ...`)
-//   const actualVersion = llgoVersion()
-//   if (actualVersion !== versionSpec) {
-//     throw new Error(
-//       `Installed llgo version ${actualVersion} does not match expected version ${versionSpec}`
-//     )
-//   }
-//   core.info(`Installed llgo version ${actualVersion}`)
-//   return actualVersion
-// }
-
-function llgoVersion(): string {
-  const out = execSync('llgo version', { env: process.env })
-  return out.toString().trim().replace(/^v/, '')
-}
-
-function fetchTags(): string[] {
-  const cmd = `git -c versionsort.suffix=- ls-remote --tags --sort=v:refname ${REPO}`
-  const out = execSync(cmd).toString()
-  const versions = out
-    .split('\n')
-    .filter(s => s)
-    .map(s => s.split('\t')[1].replace('refs/tags/', ''))
-    .map(s => s.replace(/^v/, ''))
-  return versions
-}
-
-function fetchBranches(): string[] {
-  const cmd = `git -c versionsort.suffix=- ls-remote --heads --sort=v:refname ${REPO}`
-  const out = execSync(cmd).toString()
-  const versions = out
-    .split('\n')
-    .filter(s => s)
-    .map(s => s.split('\t')[1].replace('refs/heads/', ''))
-  return versions
-}
-
-function resolveVersionInput(): string | undefined {
-  let version = process.env['INPUT_LLGO_VERSION']
-  const versionFilePath = process.env['INPUT_LLGO_VERSION_FILE']
-
-  if (version && versionFilePath) {
-    core.warning(
-      'Both llgo-version and llgo-version-file inputs are specified, only llgo-version will be used'
+export function checkoutLLGo(
+  selected: Selection,
+  sourceDir: string,
+  repo = repository
+): string {
+  git(['init', '--quiet'], sourceDir)
+  git(['remote', 'add', 'origin', repo], sourceDir)
+  let revision = selected.sha
+  if (selected.kind === 'commit' && revision.length < 40) {
+    // A server cannot fetch arbitrary abbreviated object IDs. Resolve against
+    // fetched history, letting Git reject unknown or ambiguous abbreviations.
+    git(
+      [
+        'fetch',
+        '--quiet',
+        '--filter=blob:none',
+        'origin',
+        '+refs/heads/*:refs/remotes/origin/*',
+        '+refs/tags/*:refs/tags/*'
+      ],
+      sourceDir
     )
+    revision = git(['rev-parse', '--verify', `${revision}^{commit}`], sourceDir)
+  } else {
+    git(['fetch', '--quiet', '--depth=1', 'origin', revision], sourceDir)
   }
-
-  if (version) {
-    return version
-  }
-
-  if (versionFilePath) {
-    if (!fs.existsSync(versionFilePath)) {
-      throw new Error(
-        `The specified llgo version file at: ${versionFilePath} does not exist`
-      )
-    }
-    version = parseGopVersionFile(versionFilePath)
-  }
-
-  return version
+  if (selected.kind === 'tag')
+    git(['update-ref', selected.ref, revision], sourceDir)
+  git(['checkout', '--quiet', '--detach', revision], sourceDir)
+  return git(['rev-parse', 'HEAD'], sourceDir)
 }
 
-export function parseGopVersionFile(versionFilePath: string): string {
-  const contents = fs.readFileSync(versionFilePath).toString()
-
-  if (
-    path.basename(versionFilePath) === 'go.mod' ||
-    path.basename(versionFilePath) === 'go.work'
-  ) {
-    const match = contents.match(/\/\/ llgo (\d+(\.\d+)*)/m)
-    return match ? match[1] : ''
+interface Release {
+  assets: { name: string; browser_download_url: string }[]
+}
+export async function installRelease(
+  selected: Selection,
+  platform: Platform,
+  destination: string
+): Promise<boolean> {
+  if (selected.kind !== 'tag') return false
+  const tag = selected.ref.slice('refs/tags/'.length)
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'setup-llgo'
   }
+  const token = core.getInput('token')
+  if (token) headers.Authorization = `Bearer ${token}`
+  const release = await retryNetwork(async () => {
+    const response = await fetch(
+      `https://api.github.com/repos/xgo-dev/llgo/releases/tags/${encodeURIComponent(
+        tag
+      )}`,
+      { headers, signal: AbortSignal.timeout(120000) }
+    )
+    if (response.status === 404) return undefined
+    if (!response.ok)
+      throw new Error(`Release lookup failed: HTTP ${response.status}`)
+    return (await response.json()) as Release
+  })
+  if (!release) return false
+  const filename = releaseAsset(tag, platform)
+  const asset = release.assets.find(item => item.name === filename)
+  if (!asset) return false
+  const checksumAsset = release.assets.find(
+    item => item.name === `llgo${releaseVersion(tag)}.checksums.txt`
+  )
+  if (!checksumAsset)
+    throw new Error(`Release ${tag} is missing its checksum manifest`)
+  const archive = path.join(destination, filename)
+  const checksums = path.join(destination, 'checksums.txt')
+  await download(checksumAsset.browser_download_url, checksums)
+  await download(asset.browser_download_url, archive)
+  await verifyChecksum(archive, filename, fs.readFileSync(checksums, 'utf8'))
+  execFileSync(archiveTool(), ['-xf', archive, '-C', destination], {
+    stdio: 'inherit'
+  })
+  fs.unlinkSync(archive)
+  fs.unlinkSync(checksums)
+  core.info(`Installed release asset ${filename}`)
+  return true
+}
 
-  return contents.trim()
+export async function prepareLLGo(): Promise<void> {
+  const platform = platformFor(
+    process.platform,
+    core.getInput('architecture') || process.env.RUNNER_ARCH || process.arch,
+    core.getInput('windows-abi') || 'msvc'
+  )
+  const method = core.getInput('install-method') || 'auto'
+  if (!['auto', 'source', 'release'].includes(method))
+    throw new Error(`Unknown install-method: ${method}`)
+  const refs = parseRemoteRefs(
+    git(['ls-remote', '--heads', '--tags', repository])
+  )
+  const selected = resolveVersion(
+    versionInput(
+      core.getInput('llgo-version'),
+      core.getInput('llgo-version-file')
+    ),
+    refs
+  )
+  // Own only a unique temporary directory; never touch the user's ~/workdir.
+  const sourceDir = fs.mkdtempSync(
+    path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'setup-llgo-')
+  )
+  try {
+    const prebuilt =
+      method !== 'source' &&
+      (await installRelease(selected, platform, sourceDir))
+    if (!prebuilt && method === 'release')
+      throw new Error(
+        `No release asset for ${selected.ref} on ${platform.os}/${platform.arch}/${platform.abi}`
+      )
+    const revision = prebuilt ? selected.sha : checkoutLLGo(selected, sourceDir)
+    core.info(
+      `Selected ${selected.ref} at ${revision} (${
+        prebuilt ? 'release' : 'source'
+      })`
+    )
+    core.setOutput('install-dir', sourceDir)
+    core.setOutput('install-method', prebuilt ? 'release' : 'source')
+    core.setOutput('llgo-revision', revision)
+    core.setOutput('llgo-ref', selected.ref)
+    core.setOutput('llgo-version-verified', selected.kind === 'tag')
+    core.setOutput('architecture', platform.arch)
+    core.exportVariable(
+      'SETUP_LLGO_ACTION_PATH',
+      process.env.GITHUB_ACTION_PATH || ''
+    )
+  } catch (error) {
+    fs.rmSync(sourceDir, { recursive: true, force: true })
+    throw error
+  }
+}
+
+export function installLLGo(sourceDir: string, method: string): void {
+  if (!sourceDir) throw new Error('The LLGo installation directory is required')
+  const env = { ...process.env, LLGO_ROOT: sourceDir }
+  const executable = process.platform === 'win32' ? 'llgo.exe' : 'llgo'
+  if (method === 'source')
+    execFileSync('go', ['build', '-o', `bin/${executable}`, './cmd/llgo'], {
+      cwd: sourceDir,
+      env,
+      stdio: 'inherit'
+    })
+  const binary = path.join(sourceDir, 'bin', executable)
+  const version = execFileSync(binary, ['version'], {
+    env,
+    encoding: 'utf8'
+  }).trim()
+  if (method === 'release')
+    verifyInstalledVersion(version, process.env.SETUP_LLGO_REF || '')
+  core.exportVariable('LLGO_ROOT', sourceDir)
+  core.addPath(path.dirname(binary))
+  core.info(version)
+  core.setOutput('llgo-version', version)
 }

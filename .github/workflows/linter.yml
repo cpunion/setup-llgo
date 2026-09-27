@@ -8,6 +8,10 @@ on:
     branches-ignore:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint Code Base
@@ -16,7 +20,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-      statuses: write
 
     steps:
       - name: Checkout
@@ -27,7 +30,7 @@ jobs:
         id: setup-node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: '24'
           cache: npm
 
       - name: Install Dependencies
@@ -42,4 +45,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TYPESCRIPT_DEFAULT_STYLE: prettier
           VALIDATE_JSCPD: false
+          # LLGo smoke fixtures are compiled together by the native CI matrix.
+          # Super-linter v5 invokes Go type checking separately on each file.
+          VALIDATE_GO: false
+          MULTI_STATUS: false
           FILTER_REGEX_EXCLUDE: dist/*

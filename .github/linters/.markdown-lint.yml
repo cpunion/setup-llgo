@@ -5,3 +5,7 @@ MD004:
 # Ordered list item prefix
 MD029:
   style: one
+
+# Selector and input reference tables keep one entry per row.
+MD013:
+  tables: false
