@@ -79,12 +79,26 @@ it('falls back only when a release or matching asset is absent', async () => {
 })
 it('does not hide API failures behind source fallback', async () => {
   jest.spyOn(core, 'getInput').mockReturnValue('')
-  jest
+  const fetchMock = jest
     .spyOn(global, 'fetch')
     .mockResolvedValue(new Response('', { status: 403 }))
   await expect(installRelease(release, platform, root)).rejects.toThrow(
     'HTTP 403'
   )
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+it('retries metadata connection failures but accepts a 404 without retrying it', async () => {
+  jest.spyOn(core, 'getInput').mockReturnValue('')
+  const fetchMock = jest.spyOn(global, 'fetch')
+  fetchMock.mockRejectedValueOnce(
+    new TypeError('fetch failed', {
+      cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' })
+    })
+  )
+  fetchMock.mockResolvedValueOnce(new Response('', { status: 404 }))
+  expect(await installRelease(release, platform, root)).toBe(false)
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal)
 })
 it('verifies and extracts a matching precompiled release', async () => {
   jest.spyOn(core, 'getInput').mockReturnValue('')

@@ -59,11 +59,16 @@ builds from source. Network/authentication failures and checksum mismatches fail
 installation instead of silently switching methods. Older LLGo versions may need
 explicit compatible Go and LLVM versions.
 
+Release metadata and archive transfers retry transient connection failures and
+timeouts up to three attempts, with 1s/2s backoff. HTTP errors, invalid checksums
+and local filesystem failures fail immediately.
+
 The installation stays in a unique directory under `RUNNER_TEMP`; existing user
 work directories are never removed. `PATH` and `LLGO_ROOT` are exported for later
 steps. Go caching includes LLGo's dependency files and, for source builds, its
-resolved Git HEAD. Hosted runners supply Node.js 20+ and Git; self-hosted runners
-must provide them, plus `tar` (including ZIP support on Windows).
+resolved Git HEAD. The action requires Node.js 20+ and Git on `PATH`; CI tests
+Node.js 20 and 24 on Linux, macOS and Windows. Self-hosted runners must also
+provide `tar` (including ZIP support on Windows).
 
 ## Platforms and validation
 

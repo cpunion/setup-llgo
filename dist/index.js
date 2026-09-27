@@ -6002,7 +6002,12 @@ const crypto_1 = __nccwpck_require__(6113);
 const fs_1 = __importDefault(__nccwpck_require__(7147));
 const https_1 = __importDefault(__nccwpck_require__(5687));
 const promises_1 = __nccwpck_require__(4845);
-async function download(url, destination, redirects = 0) {
+const network_1 = __nccwpck_require__(2280);
+async function download(url, destination) {
+    await (0, network_1.retryNetwork)(async () => downloadOnce(url, destination));
+}
+exports.download = download;
+async function downloadOnce(url, destination, redirects = 0) {
     const parsed = new URL(url);
     const trustedHosts = [
         'github.com',
@@ -6017,14 +6022,14 @@ async function download(url, destination, redirects = 0) {
         throw new Error(`Invalid download URL or too many redirects: ${url}`);
     const response = await new Promise((resolve, reject) => {
         const request = https_1.default.get(url, { headers: { 'User-Agent': 'setup-llgo' } }, resolve);
-        request.setTimeout(120000, () => request.destroy(new Error('Download timed out')));
+        request.setTimeout(120000, () => request.destroy((0, network_1.downloadTimeout)()));
         request.on('error', reject);
     });
     if (response.statusCode &&
         [301, 302, 303, 307, 308].includes(response.statusCode) &&
         response.headers.location) {
         response.resume();
-        await download(new URL(response.headers.location, url).href, destination, redirects + 1);
+        await downloadOnce(new URL(response.headers.location, url).href, destination, redirects + 1);
         return;
     }
     if (response.statusCode !== 200) {
@@ -6032,10 +6037,9 @@ async function download(url, destination, redirects = 0) {
         throw new Error(`Download failed (${response.statusCode}): ${url}`);
     }
     // Keep the inactivity timeout active while the body is streamed as well.
-    response.setTimeout(120000, () => response.destroy(new Error('Download timed out')));
+    response.setTimeout(120000, () => response.destroy((0, network_1.downloadTimeout)()));
     await (0, promises_1.pipeline)(response, fs_1.default.createWriteStream(destination));
 }
-exports.download = download;
 async function verifyChecksum(archive, filename, checksums) {
     const entry = checksums
         .split(/\r?\n/)
@@ -6144,6 +6148,7 @@ const path_1 = __importDefault(__nccwpck_require__(1017));
 const resolve_1 = __nccwpck_require__(1077);
 const platform_1 = __nccwpck_require__(2999);
 const download_1 = __nccwpck_require__(6232);
+const network_1 = __nccwpck_require__(2280);
 const repository = 'https://github.com/xgo-dev/llgo.git';
 function archiveTool() {
     // Git for Windows also ships GNU tar, which treats C: as a remote host
@@ -6197,12 +6202,16 @@ async function installRelease(selected, platform, destination) {
     const token = core.getInput('token');
     if (token)
         headers.Authorization = `Bearer ${token}`;
-    const response = await fetch(`https://api.github.com/repos/xgo-dev/llgo/releases/tags/${encodeURIComponent(tag)}`, { headers });
-    if (response.status === 404)
+    const release = await (0, network_1.retryNetwork)(async () => {
+        const response = await fetch(`https://api.github.com/repos/xgo-dev/llgo/releases/tags/${encodeURIComponent(tag)}`, { headers, signal: AbortSignal.timeout(120000) });
+        if (response.status === 404)
+            return undefined;
+        if (!response.ok)
+            throw new Error(`Release lookup failed: HTTP ${response.status}`);
+        return (await response.json());
+    });
+    if (!release)
         return false;
-    if (!response.ok)
-        throw new Error(`Release lookup failed: HTTP ${response.status}`);
-    const release = (await response.json());
     const filename = (0, platform_1.releaseAsset)(tag, platform);
     const asset = release.assets.find(item => item.name === filename);
     if (!asset)
@@ -6278,6 +6287,83 @@ function installLLGo(sourceDir, method) {
     core.setOutput('llgo-version', version);
 }
 exports.installLLGo = installLLGo;
+
+
+/***/ }),
+
+/***/ 2280:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.downloadTimeout = exports.retryNetwork = void 0;
+const core = __importStar(__nccwpck_require__(2186));
+function isTransientNetworkError(error) {
+    for (let depth = 0; error instanceof Error && depth < 3; depth++) {
+        if (error.name === 'TimeoutError' ||
+            [
+                'ECONNRESET',
+                'ECONNREFUSED',
+                'ETIMEDOUT',
+                'EAI_AGAIN',
+                'ENOTFOUND',
+                'ENETUNREACH',
+                'EHOSTUNREACH',
+                'ERR_STREAM_PREMATURE_CLOSE',
+                'UND_ERR_SOCKET',
+                'UND_ERR_CONNECT_TIMEOUT',
+                'UND_ERR_HEADERS_TIMEOUT',
+                'UND_ERR_BODY_TIMEOUT'
+            ].includes(error.code || ''))
+            return true;
+        error = error.cause;
+    }
+    return false;
+}
+async function retryNetwork(operation) {
+    for (let attempt = 0;; attempt++) {
+        try {
+            return await operation();
+        }
+        catch (error) {
+            // HTTP responses, bad checksums and filesystem errors are not transient
+            // transport failures. In particular, never retry a missing release.
+            if (attempt === 2 || !isTransientNetworkError(error))
+                throw error;
+            core.info(`Network transfer failed; retrying (attempt ${attempt + 2}/3)`);
+            await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt));
+        }
+    }
+}
+exports.retryNetwork = retryNetwork;
+function downloadTimeout() {
+    return Object.assign(new Error('Download timed out'), { code: 'ETIMEDOUT' });
+}
+exports.downloadTimeout = downloadTimeout;
 
 
 /***/ }),

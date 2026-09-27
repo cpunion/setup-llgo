@@ -12,6 +12,7 @@ import {
 } from './resolve'
 import { platformFor, Platform, releaseAsset, releaseVersion } from './platform'
 import { download, verifyChecksum } from './download'
+import { retryNetwork } from './network'
 
 const repository = 'https://github.com/xgo-dev/llgo.git'
 
@@ -78,16 +79,19 @@ export async function installRelease(
   }
   const token = core.getInput('token')
   if (token) headers.Authorization = `Bearer ${token}`
-  const response = await fetch(
-    `https://api.github.com/repos/xgo-dev/llgo/releases/tags/${encodeURIComponent(
-      tag
-    )}`,
-    { headers }
-  )
-  if (response.status === 404) return false
-  if (!response.ok)
-    throw new Error(`Release lookup failed: HTTP ${response.status}`)
-  const release = (await response.json()) as Release
+  const release = await retryNetwork(async () => {
+    const response = await fetch(
+      `https://api.github.com/repos/xgo-dev/llgo/releases/tags/${encodeURIComponent(
+        tag
+      )}`,
+      { headers, signal: AbortSignal.timeout(120000) }
+    )
+    if (response.status === 404) return undefined
+    if (!response.ok)
+      throw new Error(`Release lookup failed: HTTP ${response.status}`)
+    return (await response.json()) as Release
+  })
+  if (!release) return false
   const filename = releaseAsset(tag, platform)
   const asset = release.assets.find(item => item.name === filename)
   if (!asset) return false
