@@ -1,52 +1,103 @@
-name: Lint Code Base
-
+name: Continuous Integration
 on:
   pull_request:
-    branches:
-      - main
   push:
-    branches-ignore:
-      - main
-
+    branches: [codex/setup-llgo-native-validation-20260927]
+  workflow_dispatch:
+permissions:
+  contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
 jobs:
-  lint:
-    name: Lint Code Base
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: read
-
+  test-typescript:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
-        id: checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        id: setup-node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
-
-      - name: Install Dependencies
-        id: install
-        run: npm ci
-
-      - name: Lint Code Base
-        id: super-linter
-        uses: super-linter/super-linter/slim@v5
+      - run: npm ci --ignore-scripts
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm run ci-test
+  native:
+    name: ${{ matrix.method }} / ${{ matrix.platform.os }} / ${{ matrix.platform.arch }} / ${{ matrix.platform.abi }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        method: [release, source]
+        platform:
+          - {os: ubuntu-24.04, arch: amd64, abi: msvc}
+          - {os: ubuntu-24.04-arm, arch: arm64, abi: msvc}
+          - {os: macos-15-intel, arch: amd64, abi: msvc}
+          - {os: macos-latest, arch: arm64, abi: msvc}
+          - {os: windows-2022, arch: amd64, abi: msvc}
+          - {os: windows-2022, arch: amd64, abi: mingw}
+          - {os: windows-11-arm, arch: arm64, abi: msvc}
+          - {os: windows-11-arm, arch: arm64, abi: mingw}
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./
+        id: setup
+        with:
+          llgo-version: ${{ matrix.method == 'release' && 'v1.0.4' || 'main' }}
+          install-method: ${{ matrix.method }}
+          architecture: ${{ matrix.platform.arch }}
+          windows-abi: ${{ matrix.platform.abi }}
+      - name: Check installation outputs and execute native code
+        shell: bash
+        working-directory: testdata/smoke
         env:
-          DEFAULT_BRANCH: main
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TYPESCRIPT_DEFAULT_STYLE: prettier
-          VALIDATE_JSCPD: false
-          # LLGo smoke fixtures are compiled together by the native CI matrix.
-          # Super-linter v5 invokes Go type checking separately on each file.
-          VALIDATE_GO: false
-          MULTI_STATUS: false
-          FILTER_REGEX_EXCLUDE: dist/*
+          ACTUAL_METHOD: ${{ steps.setup.outputs.install-method }}
+          ACTUAL_VERIFIED: ${{ steps.setup.outputs.llgo-version-verified }}
+          EXPECTED_VERIFIED: ${{ matrix.method == 'release' && 'true' || 'false' }}
+          EXPECTED_METHOD: ${{ matrix.method }}
+          LLGO_REVISION: ${{ steps.setup.outputs.llgo-revision }}
+          LLGO_ARCH: ${{ matrix.platform.arch }}
+          LLGO_ABI: ${{ matrix.platform.abi }}
+        run: |
+          test "$ACTUAL_METHOD" = "$EXPECTED_METHOD"
+          test "$ACTUAL_VERIFIED" = "$EXPECTED_VERIFIED"
+          test "${#LLGO_REVISION}" = 40
+          llgo version
+          llgo test -v ./...
+          llgo build -x -o hello.exe . > build.log 2>&1
+          test "$(./hello.exe | tr -d '\r')" = 42
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            arch=x86_64
+            [[ "$LLGO_ARCH" == arm64 ]] && arch=aarch64
+            if [[ "$LLGO_ABI" == msvc ]]; then
+              grep -q "$arch-pc-windows-msvc" build.log
+            else
+              grep -Eq "$arch-(w64-windows-gnu|w64-mingw32)" build.log
+            fi
+          fi
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-${{ matrix.method }}-${{ matrix.platform.os }}-${{ matrix.platform.arch }}-${{ matrix.platform.abi }}
+          path: testdata/smoke/build.log
+  selectors:
+    name: Selector / ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['v1.0', 'v1.0.*', '^1.0.3', '7db1409073f28bf13a35ae0a3ea663eba010fd73', '7db1409']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./
+        with:
+          llgo-version: ${{ matrix.version }}
+      - run: llgo test -v ./...
+        working-directory: testdata/smoke
