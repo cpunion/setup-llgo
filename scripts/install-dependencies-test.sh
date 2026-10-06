@@ -99,6 +99,8 @@ run_dependencies || fail 'Linux root dependency installation failed'
 first_operation="$(awk '/^preserve:|^apt-get:/ { print; exit }' "$DEPENDENCY_TEST_LOG")"
 [[ "$first_operation" == preserve: ]] || fail 'An apt operation preceded CA preservation'
 grep -Fxq 'apt-get:install -y ca-certificates curl' "$DEPENDENCY_TEST_LOG" || fail 'Missing HTTPS prerequisites'
+grep -Fq 'curl:--fail --silent --show-error --location --proto =https --proto-redir =https --retry 3 --retry-connrefused https://apt.llvm.org/llvm-snapshot.gpg.key -o ' \
+  "$DEPENDENCY_TEST_LOG" || fail 'LLVM key download lacks HTTPS restrictions or retries'
 for package in llvm-22-dev clang-22 libclang-22-dev lld-22 libunwind-22-dev libc++-22-dev \
   build-essential cmake git pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev libuv1-dev; do
   grep '^apt-get:install ' "$DEPENDENCY_TEST_LOG" | grep -Fq " $package" || fail "Missing package: $package"

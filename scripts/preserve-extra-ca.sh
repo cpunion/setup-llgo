@@ -5,7 +5,8 @@
 # The privilege command is empty (run directly) or one executable, such as sudo.
 # Extra CAs are registered in /usr/local/share/ca-certificates by default;
 # this helper does not add trust for certificates absent from the current bundle.
-# Adapted from CarlJi's goplus/llcppg PR #940, commit f192189cc910b6147f33803fdeda2fc90ea9f039.
+# Adapted from Changjun Ji (CarlJi), goplus/llcppg PR #940,
+# commit f192189cc910b6147f33803fdeda2fc90ea9f039.
 
 split_ca_certificates() {
   local source_file="$1"
@@ -42,7 +43,7 @@ ca_certificate_fingerprint() {
     return 1
   fi
   fingerprint="${fingerprint#*=}"
-  printf '%s\n' "$fingerprint" | tr -d ':' | tr '[:upper:]' '[:lower:]'
+  printf '%s\n' "${fingerprint//:/}"
 }
 
 preserve_extra_ca() (

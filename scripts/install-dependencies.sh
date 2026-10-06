@@ -36,7 +36,8 @@ case "$(uname -s)" in
     # Scope the signing key to this repository; apt-key grants global trust.
     key_file="$(mktemp)"
     trap 'rm -f "$key_file"' EXIT
-    curl --fail --silent --show-error --location \
+    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+      --retry 3 --retry-connrefused \
       https://apt.llvm.org/llvm-snapshot.gpg.key -o "$key_file"
     run_privileged install -d -m 0755 /etc/apt/keyrings
     run_privileged install -m 0644 "$key_file" /etc/apt/keyrings/setup-llgo-llvm.asc
@@ -53,7 +54,7 @@ case "$(uname -s)" in
   Darwin)
     export HOMEBREW_NO_AUTO_UPDATE=1
     export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
-    # Preserve runner-image formulae on Intel, where newer bottles may be absent.
+    # Refresh ARM64 metadata; keep Intel's runner-image formulae when newer bottles may be absent.
     if [[ "$(uname -m)" == arm64 ]]; then brew update; fi
     brew_install_missing() {
       local formula

@@ -82,6 +82,22 @@ it('stops before building when llvm-config fails', () => {
   expect(core.addPath).not.toHaveBeenCalled()
 })
 
+it('explains how to fix a missing llvm-config', () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  const exec = jest
+    .spyOn(childProcess, 'execFileSync')
+    .mockImplementation(() => {
+      throw Object.assign(new Error('spawnSync llvm-config ENOENT'), {
+        code: 'ENOENT'
+      })
+    })
+  expect(() => installLLGo('compiler', 'source')).toThrow(
+    'add the selected LLVM bin directory to PATH'
+  )
+  expect(exec).toHaveBeenCalledTimes(1)
+  expect(core.addPath).not.toHaveBeenCalled()
+})
+
 it('requires an installation directory', () => {
   expect(() => installLLGo('', 'source')).toThrow('directory is required')
 })

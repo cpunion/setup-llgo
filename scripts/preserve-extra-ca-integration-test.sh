@@ -57,6 +57,7 @@ make_root distribution
 make_root extra
 extra_fingerprint="$(openssl x509 -in "$work_dir/extra.crt" -outform DER | sha256sum)"
 extra_fingerprint="${extra_fingerprint%% *}"
+extra_fingerprint="$(printf '%s' "$extra_fingerprint" | tr '[:lower:]' '[:upper:]')"
 extra_filename="setup-llgo-extra-ca-$extra_fingerprint.crt"
 
 mkdir "$work_dir/server" "$work_dir/empty-ca"
@@ -70,12 +71,15 @@ openssl x509 -req -sha256 -days 1 -in "$work_dir/server.csr" \
   -extfile "$work_dir/server.ext" -out "$work_dir/server.crt" >/dev/null 2>&1
 
 # Ignore ambient Git settings, including options that disable TLS verification.
-fixture_git() {
+fixture_git() (
+  # A read-only checkout mount can contain a .git file pointing outside the
+  # container. Keep Git's repository discovery inside the disposable fixture.
+  cd "$work_dir"
   env -i PATH="$PATH" LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
     GIT_AUTHOR_NAME='CA integration test' GIT_AUTHOR_EMAIL=ca-test@example.invalid \
     GIT_COMMITTER_NAME='CA integration test' GIT_COMMITTER_EMAIL=ca-test@example.invalid \
     git "$@"
-}
+)
 
 fixture_git -c init.defaultBranch=main init --bare "$work_dir/server/repo.git" >/dev/null
 empty_tree="$(fixture_git --git-dir="$work_dir/server/repo.git" mktree </dev/null)"

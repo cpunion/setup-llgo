@@ -44,6 +44,10 @@ it never resets another checkout or changes shell profiles. `GH_TOKEN` or
 provides setup-go caching; the standalone entrypoint does not implement a second
 cache manager. Native Windows setup remains available through the action.
 
+When setting `INSTALL_DEPENDENCIES=false`, provide the required native libraries
+and put the selected LLVM's `bin` directory (including `llvm-config`) on `PATH`
+before running the installer.
+
 Both entrypoints share Unix dependency setup. On Debian/Ubuntu, CA certificates
 already present only in the system trust bundle are registered as local sources
 before apt can regenerate that bundle. Managed certificates (including disabled

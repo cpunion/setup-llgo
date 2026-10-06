@@ -189,8 +189,23 @@ export function installLLGo(sourceDir: string, method: string): void {
     if (process.platform !== 'win32') {
       // Use the selected LLVM, not the Go binding's default major version.
       // Keep these flags scoped to building the compiler itself.
-      const flags = (...options: string[]): string =>
-        execFileSync('llvm-config', options, { encoding: 'utf8' }).trim()
+      const flags = (...options: string[]): string => {
+        try {
+          return execFileSync('llvm-config', options, {
+            encoding: 'utf8'
+          }).trim()
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'ENOENT'
+          )
+            throw new Error(
+              'llvm-config was not found on PATH. Install LLVM dependencies or add the selected LLVM bin directory to PATH before disabling dependency installation.'
+            )
+          throw error
+        }
+      }
       Object.assign(env, {
         CGO_CPPFLAGS: flags('--cflags'),
         CGO_CXXFLAGS: flags('--cxxflags'),

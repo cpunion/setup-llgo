@@ -5,7 +5,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/setup-llgo-install-test.XXXXXX")"
 test_root="$(cd "$test_root" && pwd)"
 trap 'rm -rf "$test_root"' EXIT
-export TEST_REAL_NODE="$(command -v node)"
+TEST_REAL_NODE="$(command -v node)"
+export TEST_REAL_NODE
 export TEST_ROOT="$test_root" TEST_TRACE="$test_root/trace"
 mkdir -p "$test_root/fixture/scripts" "$test_root/fixture/dist" "$test_root/bin" \
   "$test_root/Go toolchain/bin" "$test_root/LLVM tools" "$test_root/consumer"
@@ -100,6 +101,8 @@ grep -Fxq 'install:source:refs/heads/main' "$TEST_TRACE"
 installs=("$install_root"/setup-llgo-*)
 [[ ${#installs[@]} == 1 && -f "${installs[0]}/env.sh" ]]
 activation="${installs[0]}/env.sh"
+# Expand the activation checks in the child shell after sourcing its environment.
+# shellcheck disable=SC2016
 env PATH="$test_root/bin:$PATH" GOROOT=/stale/goroot GOTOOLCHAIN=auto \
   bash -ec 'source "$1"; [[ "$(go env GOVERSION)" == go1.27.0 ]]; [[ "$(llgo version)" == "llgo mock" ]]; [[ "$LLGO_ROOT/env.sh" == "$1" ]]; [[ ":$PATH:" == *":$TEST_ROOT/LLVM tools:"* ]]' bash "$activation"
 grep -Fxq "GOROOT=$test_root/Go toolchain" "$test_root/action-env"
@@ -110,7 +113,10 @@ grep -Fxq "${installs[0]}/bin" "$test_root/action-path"
 : > "$TEST_TRACE"
 run_install GO_VERSION=1.27.0 INSTALL_DEPENDENCIES=false
 grep -Fxq 'prepare:latest:auto' "$TEST_TRACE"
-! grep -q '^dependencies:' "$TEST_TRACE"
+if grep -q '^dependencies:' "$TEST_TRACE"; then
+  echo 'Dependencies ran despite INSTALL_DEPENDENCIES=false.' >&2
+  exit 1
+fi
 installs=("$install_root"/setup-llgo-*)
 [[ ${#installs[@]} == 2 && -f "$activation" ]]
 [[ "$(< "$install_root/sentinel")" == keep ]]
