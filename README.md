@@ -14,6 +14,44 @@ Go, LLVM and native runtime dependencies are installed for the selected host.
 - run: llgo test -v ./...
 ```
 
+## Local development and agents
+
+On Debian/Ubuntu or macOS, run the same installer implementation outside GitHub
+Actions. Prerequisites are Bash, Git, Node.js 20+, and an existing Go 1.21+
+launcher; dependency installation also needs sudo/root or Homebrew respectively.
+No npm install is needed: the checked-in bundle is ready to run.
+
+```bash
+git clone https://github.com/xgo-dev/setup-llgo.git ../setup-llgo
+LLGO_VERSION=main GO_VERSION=1.27.0 bash ../setup-llgo/scripts/install.sh
+# Run the exact `source .../env.sh` command printed by the installer.
+llgo version
+llgo test -v ./...
+```
+
+`LLGO_VERSION` accepts the same selectors as `llgo-version` (default: latest
+stable release). `GO_VERSION` is an exact patch version, defaulting to the
+current directory's go.mod `go` directive, or 1.27.0 if absent. Set it explicitly
+when the project uses an older Go than the selected LLGo compiler requires.
+The Go module proxy supplies the toolchain; its real `bin/go`, not an older
+toolchain-switching launcher, is activated with `GOTOOLCHAIN=local`.
+
+Other overrides are `LLVM_VERSION` (22), `INSTALL_METHOD` (auto),
+`INSTALL_DEPENDENCIES` (true), and `LLGO_INSTALL_ROOT` (`~/.cache/setup-llgo`).
+Each invocation owns a new installation directory and writes an `env.sh` there;
+it never resets another checkout or changes shell profiles. `GH_TOKEN` or
+`GITHUB_TOKEN` is optional for release metadata. In CI, the action additionally
+provides setup-go caching; the standalone entrypoint does not implement a second
+cache manager. Native Windows setup remains available through the action.
+
+Both entrypoints share Unix dependency setup. On Debian/Ubuntu, CA certificates
+already present only in the system trust bundle are registered as local sources
+before apt can regenerate that bundle. Managed certificates (including disabled
+ones) are not promoted to local trust. Missing OpenSSL, malformed certificates,
+or bundle-only non-CA certificates fail before apt; TLS verification is never
+disabled. This preserves existing administrator trust, not certificates supplied
+by the project, and cannot restore a CA that was already lost.
+
 ## Selecting LLGo
 
 | Input | Selection |

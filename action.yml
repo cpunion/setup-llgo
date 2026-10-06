@@ -783,87 +783,12 @@ runs:
         # setup-demo-deps adds profile-local metadata below RUNNER_TEMP.
         Add-Content -Encoding utf8 $env:GITHUB_PATH $nativeTools
 
-    - name: Refresh Homebrew metadata on Apple Silicon
-      if: inputs.install-dependencies == 'true' && runner.os == 'macOS' && runner.arch == 'ARM64'
-      shell: bash
-      env:
-        HOMEBREW_NO_AUTO_UPDATE: 1
-      run: brew update
-
-    - name: Install macOS dependencies
-      if: inputs.install-dependencies == 'true' && runner.os == 'macOS'
-      shell: bash
-      env:
-        HOMEBREW_NO_AUTO_UPDATE: 1
-        HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-      run: |
-        # Intel macOS is a Homebrew Tier 3 configuration and newly published
-        # formulae may have no Intel bottle. Keep its runner-image metadata and
-        # installed formulae; Apple Silicon refreshes metadata in the step above.
-        brew_install_missing() {
-          local formula
-          local missing=()
-          for formula in "$@"; do
-            if ! brew list --versions "${formula}" >/dev/null; then
-              missing+=("${formula}")
-            fi
-          done
-          if (( ${#missing[@]} > 0 )); then
-            brew install "${missing[@]}"
-          fi
-        }
-
-        # Install LLVM if requested
-        if [[ "${{ inputs.install-dependencies }}" == "true" ]]; then
-          llvm_formula="llvm@${{inputs.llvm-version}}"
-          lld_formula="lld@${{inputs.llvm-version}}"
-
-          # GitHub macOS runners may pre-link another LLVM/LLD version (for example llvm@18),
-          # which makes lld@<target> fail during Homebrew's automatic link step.
-          while IFS= read -r formula; do
-            case "${formula}" in
-              llvm|llvm@*|lld|lld@*)
-                if [[ "${formula}" != "${llvm_formula}" && "${formula}" != "${lld_formula}" ]]; then
-                  brew unlink "${formula}" || true
-                fi
-                ;;
-            esac
-          done < <(brew list --formula)
-
-          brew_install_missing "${llvm_formula}" "${lld_formula}"
-          brew link --force --overwrite "${llvm_formula}" "${lld_formula}"
-          llvm_bin="$(brew --prefix "${llvm_formula}")/bin"
-          lld_bin="$(brew --prefix "${lld_formula}")/bin"
-          echo "${llvm_bin}" >> "$GITHUB_PATH"
-          echo "${lld_bin}" >> "$GITHUB_PATH"
-
-          # Print resolved toolchain versions for CI diagnostics.
-          echo "LLVM/LLD versions:"
-          brew list --versions "${llvm_formula}" "${lld_formula}"
-          clang_version="$("${llvm_bin}/clang" --version | head -n 1)"
-          lld_version="$("${lld_bin}/ld.lld" --version | head -n 1)"
-          echo "clang: ${clang_version}"
-          echo "ld.lld: ${lld_version}"
-          test "$("${llvm_bin}/clang" -dumpversion | cut -d. -f1)" = "${{inputs.llvm-version}}"
-          "${lld_bin}/ld.lld" --version | grep -Eq "(^|[[:space:]])${{inputs.llvm-version}}\."
-          echo "linked ld.lld path: $(command -v ld.lld || true)"
-        fi
-
-        # Install common dependencies
-        brew_install_missing bdw-gc openssl libffi libuv
-        brew link --overwrite libffi
-
-    - name: Install Linux dependencies
-      if: runner.os == 'Linux' && inputs.install-dependencies == 'true'
+    - name: Install Unix dependencies
+      if: runner.os != 'Windows' && inputs.install-dependencies == 'true'
       shell: bash
       env:
         LLVM_VERSION: ${{ inputs.llvm-version }}
-      run: |
-        echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-$LLVM_VERSION main" | sudo tee /etc/apt/sources.list.d/llvm.list
-        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-        sudo apt-get update
-        sudo apt-get install -y "clang-$LLVM_VERSION" "libclang-$LLVM_VERSION-dev" "lld-$LLVM_VERSION" pkg-config libgc-dev libssl-dev zlib1g-dev libffi-dev libuv1-dev
-        echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
+      run: bash "$GITHUB_ACTION_PATH/scripts/install-dependencies.sh"
     - name: Build or activate LLGo
       id: install
       shell: bash

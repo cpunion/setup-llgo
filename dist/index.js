@@ -6086,13 +6086,20 @@ var __importStar = (this && this.__importStar) || function (mod) {
     __setModuleDefault(result, mod);
     return result;
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(2186));
+const fs_1 = __importDefault(__nccwpck_require__(7147));
 const install_1 = __nccwpck_require__(1649);
 async function run() {
     try {
-        if (process.env.SETUP_LLGO_PHASE === 'prepare')
-            await (0, install_1.prepareLLGo)();
+        if (process.env.SETUP_LLGO_PHASE === 'prepare') {
+            const installation = await (0, install_1.prepareLLGo)();
+            if (process.env.SETUP_LLGO_RESULT)
+                fs_1.default.writeFileSync(process.env.SETUP_LLGO_RESULT, JSON.stringify(installation));
+        }
         else if (process.env.SETUP_LLGO_PHASE === 'install')
             (0, install_1.installLLGo)(process.env.SETUP_LLGO_SOURCE || '', process.env.SETUP_LLGO_METHOD || '');
         else
@@ -6256,6 +6263,12 @@ async function prepareLLGo() {
         core.setOutput('llgo-version-verified', selected.kind === 'tag');
         core.setOutput('architecture', platform.arch);
         core.exportVariable('SETUP_LLGO_ACTION_PATH', process.env.GITHUB_ACTION_PATH || '');
+        return {
+            directory: sourceDir,
+            method: prebuilt ? 'release' : 'source',
+            ref: selected.ref,
+            revision
+        };
     }
     catch (error) {
         fs_1.default.rmSync(sourceDir, { recursive: true, force: true });
@@ -6268,12 +6281,26 @@ function installLLGo(sourceDir, method) {
         throw new Error('The LLGo installation directory is required');
     const env = { ...process.env, LLGO_ROOT: sourceDir };
     const executable = process.platform === 'win32' ? 'llgo.exe' : 'llgo';
-    if (method === 'source')
-        (0, child_process_1.execFileSync)('go', ['build', '-o', `bin/${executable}`, './cmd/llgo'], {
+    if (method === 'source') {
+        const args = ['build'];
+        if (process.platform !== 'win32') {
+            // Use the selected LLVM, not the Go binding's default major version.
+            // Keep these flags scoped to building the compiler itself.
+            const flags = (...options) => (0, child_process_1.execFileSync)('llvm-config', options, { encoding: 'utf8' }).trim();
+            Object.assign(env, {
+                CGO_CPPFLAGS: flags('--cflags'),
+                CGO_CXXFLAGS: flags('--cxxflags'),
+                CGO_LDFLAGS: flags('--ldflags', '--libs', '--system-libs')
+            });
+            args.push('-tags=byollvm');
+        }
+        args.push('-o', `bin/${executable}`, './cmd/llgo');
+        (0, child_process_1.execFileSync)('go', args, {
             cwd: sourceDir,
             env,
             stdio: 'inherit'
         });
+    }
     const binary = path_1.default.join(sourceDir, 'bin', executable);
     const version = (0, child_process_1.execFileSync)(binary, ['version'], {
         env,
