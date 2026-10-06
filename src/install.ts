@@ -184,42 +184,12 @@ export function installLLGo(sourceDir: string, method: string): void {
   if (!sourceDir) throw new Error('The LLGo installation directory is required')
   const env = { ...process.env, LLGO_ROOT: sourceDir }
   const executable = process.platform === 'win32' ? 'llgo.exe' : 'llgo'
-  if (method === 'source') {
-    const args = ['build']
-    if (process.platform !== 'win32') {
-      // Use the selected LLVM, not the Go binding's default major version.
-      // Keep these flags scoped to building the compiler itself.
-      const flags = (...options: string[]): string => {
-        try {
-          return execFileSync('llvm-config', options, {
-            encoding: 'utf8'
-          }).trim()
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            'code' in error &&
-            error.code === 'ENOENT'
-          )
-            throw new Error(
-              'llvm-config was not found on PATH. Install LLVM dependencies or add the selected LLVM bin directory to PATH before disabling dependency installation.'
-            )
-          throw error
-        }
-      }
-      Object.assign(env, {
-        CGO_CPPFLAGS: flags('--cflags'),
-        CGO_CXXFLAGS: flags('--cxxflags'),
-        CGO_LDFLAGS: flags('--ldflags', '--libs', '--system-libs')
-      })
-      args.push('-tags=byollvm')
-    }
-    args.push('-o', `bin/${executable}`, './cmd/llgo')
-    execFileSync('go', args, {
+  if (method === 'source')
+    execFileSync('go', ['build', '-o', `bin/${executable}`, './cmd/llgo'], {
       cwd: sourceDir,
       env,
       stdio: 'inherit'
     })
-  }
   const binary = path.join(sourceDir, 'bin', executable)
   const version = execFileSync(binary, ['version'], {
     env,

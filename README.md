@@ -45,7 +45,7 @@ provides setup-go caching; the standalone entrypoint does not implement a second
 cache manager. Native Windows setup remains available through the action.
 
 When setting `INSTALL_DEPENDENCIES=false`, provide the required native libraries
-and put the selected LLVM's `bin` directory (including `llvm-config`) on `PATH`
+and put the matching LLVM's `bin` directory on `PATH`
 before running the installer.
 
 Both entrypoints share Unix dependency setup. On Debian/Ubuntu, CA certificates

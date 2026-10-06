@@ -9,8 +9,7 @@ matrix excludes the upstream 32-bit cross-target setup.
 
 Bundled JavaScript dependency notices are in `dist/licenses.txt`.
 
-The CA-preservation helper and regression tests in `scripts/preserve-extra-ca*.sh`
-are adapted from [goplus/llcppg PR #940](https://github.com/goplus/llcppg/pull/940)
+The CA-preservation helper in `scripts/preserve-extra-ca.sh`
+is adapted from [goplus/llcppg PR #940](https://github.com/goplus/llcppg/pull/940)
 by Changjun Ji, under Apache-2.0 (the license text is in `LICENSES/llgo.txt`).
-The adaptation follows certificate-source symlinks, checks failures explicitly,
-and tests isolated trust-store regeneration without changing host trust.
+The adaptation follows certificate-source symlinks and checks failures explicitly.

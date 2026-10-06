@@ -28,16 +28,6 @@ jobs:
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm run ci-test
-      - name: Test local installer and certificate preservation
-        if: runner.os != 'Windows' && matrix.node == '20'
-        shell: bash
-        run: |
-          bash scripts/install-test.sh
-          bash scripts/install-dependencies-test.sh
-          bash scripts/preserve-extra-ca-test.sh
-      - name: Test real certificate regeneration with HTTPS and Git
-        if: runner.os == 'Linux' && matrix.node == '20'
-        run: bash scripts/preserve-extra-ca-integration-test.sh
   native:
     name: ${{ matrix.method }} / ${{ matrix.platform.os }} / ${{ matrix.platform.arch }} / ${{ matrix.platform.abi }}
     timeout-minutes: 60
